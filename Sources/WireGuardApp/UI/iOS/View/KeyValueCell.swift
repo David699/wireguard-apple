@@ -27,7 +27,7 @@ class KeyValueCell: UITableViewCell {
     }()
 
     let valueTextField: UITextField = {
-        let valueTextField = UITextField()
+        let valueTextField = KeyValueCellTextField()
         valueTextField.textAlignment = .right
         valueTextField.isEnabled = false
         valueTextField.font = UIFont.preferredFont(forTextStyle: .body)
@@ -114,8 +114,6 @@ class KeyValueCell: UITableViewCell {
         let expandToFitValueLabelConstraint = NSLayoutConstraint(item: valueTextField, attribute: .width, relatedBy: .equal, toItem: valueLabelScrollView, attribute: .width, multiplier: 1, constant: 0)
         expandToFitValueLabelConstraint.priority = .defaultLow + 1
         expandToFitValueLabelConstraint.isActive = true
-
-        contentView.addSubview(valueLabelScrollView)
 
         contentView.addSubview(valueLabelScrollView)
         valueLabelScrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -233,4 +231,11 @@ extension KeyValueCell: UITextFieldDelegate {
         return true
     }
 
+}
+
+class KeyValueCellTextField: UITextField {
+    override func placeholderRect(forBounds bounds: CGRect) -> CGRect {
+        // UIKit renders the placeholder label 0.5pt higher
+        return super.placeholderRect(forBounds: bounds).integral.offsetBy(dx: 0, dy: -0.5)
+    }
 }

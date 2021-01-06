@@ -23,9 +23,9 @@ class TunnelsManager {
     private var tunnels: [TunnelContainer]
     weak var tunnelsListDelegate: TunnelsManagerListDelegate?
     weak var activationDelegate: TunnelsManagerActivationDelegate?
-    private var statusObservationToken: AnyObject?
-    private var waiteeObservationToken: AnyObject?
-    private var configurationsObservationToken: AnyObject?
+    private var statusObservationToken: NotificationToken?
+    private var waiteeObservationToken: NSKeyValueObservation?
+    private var configurationsObservationToken: NotificationToken?
 
     init(tunnelProviders: [NETunnelProviderManager]) {
         tunnels = tunnelProviders.map { TunnelContainer(tunnel: $0) }.sorted { TunnelsManager.tunnelNameIsLessThan($0.name, $1.name) }
@@ -138,10 +138,10 @@ class TunnelsManager {
         let activeTunnel = tunnels.first { $0.status == .active || $0.status == .activating }
 
         tunnelProviderManager.saveToPreferences { [weak self] error in
-            guard error == nil else {
-                wg_log(.error, message: "Add: Saving configuration failed: \(error!)")
+            if let error = error {
+                wg_log(.error, message: "Add: Saving configuration failed: \(error)")
                 (tunnelProviderManager.protocolConfiguration as? NETunnelProviderProtocol)?.destroyConfigurationReference()
-                completionHandler(.failure(TunnelsManagerError.systemErrorOnAddTunnel(systemError: error!)))
+                completionHandler(.failure(TunnelsManagerError.systemErrorOnAddTunnel(systemError: error)))
                 return
             }
 
@@ -169,7 +169,20 @@ class TunnelsManager {
     }
 
     func addMultiple(tunnelConfigurations: [TunnelConfiguration], completionHandler: @escaping (UInt, TunnelsManagerError?) -> Void) {
-        addMultiple(tunnelConfigurations: ArraySlice(tunnelConfigurations), numberSuccessful: 0, lastError: nil, completionHandler: completionHandler)
+        // Temporarily pause observation of changes to VPN configurations to prevent the feedback
+        // loop that causes `reload()` to be called on each newly added tunnel, which significantly
+        // impacts performance.
+        configurationsObservationToken = nil
+
+        self.addMultiple(tunnelConfigurations: ArraySlice(tunnelConfigurations), numberSuccessful: 0, lastError: nil) { [weak self] numSucceeded, error in
+            completionHandler(numSucceeded, error)
+
+            // Restart observation of changes to VPN configrations.
+            self?.startObservingTunnelConfigurations()
+
+            // Force reload all configurations to make sure that all tunnels are up to date.
+            self?.reload()
+        }
     }
 
     private func addMultiple(tunnelConfigurations: ArraySlice<TunnelConfiguration>, numberSuccessful: UInt, lastError: TunnelsManagerError?, completionHandler: @escaping (UInt, TunnelsManagerError?) -> Void) {
@@ -222,10 +235,10 @@ class TunnelsManager {
         onDemandOption.apply(on: tunnelProviderManager)
 
         tunnelProviderManager.saveToPreferences { [weak self] error in
-            guard error == nil else {
+            if let error = error {
                 //TODO: the passwordReference for the old one has already been removed at this point and we can't easily roll back!
-                wg_log(.error, message: "Modify: Saving configuration failed: \(error!)")
-                completionHandler(TunnelsManagerError.systemErrorOnModifyTunnel(systemError: error!))
+                wg_log(.error, message: "Modify: Saving configuration failed: \(error)")
+                completionHandler(TunnelsManagerError.systemErrorOnModifyTunnel(systemError: error))
                 return
             }
             guard let self = self else { return }
@@ -253,12 +266,12 @@ class TunnelsManager {
                 // Without this, the tunnel stopes getting updates on the tunnel status from iOS.
                 tunnelProviderManager.loadFromPreferences { error in
                     tunnel.isActivateOnDemandEnabled = tunnelProviderManager.isOnDemandEnabled
-                    guard error == nil else {
-                        wg_log(.error, message: "Modify: Re-loading after saving configuration failed: \(error!)")
-                        completionHandler(TunnelsManagerError.systemErrorOnModifyTunnel(systemError: error!))
-                        return
+                    if let error = error {
+                        wg_log(.error, message: "Modify: Re-loading after saving configuration failed: \(error)")
+                        completionHandler(TunnelsManagerError.systemErrorOnModifyTunnel(systemError: error))
+                    } else {
+                        completionHandler(nil)
                     }
-                    completionHandler(nil)
                 }
             } else {
                 completionHandler(nil)
@@ -278,9 +291,9 @@ class TunnelsManager {
         #error("Unimplemented")
         #endif
         tunnelProviderManager.removeFromPreferences { [weak self] error in
-            guard error == nil else {
-                wg_log(.error, message: "Remove: Saving configuration failed: \(error!)")
-                completionHandler(TunnelsManagerError.systemErrorOnRemoveTunnel(systemError: error!))
+            if let error = error {
+                wg_log(.error, message: "Remove: Saving configuration failed: \(error)")
+                completionHandler(TunnelsManagerError.systemErrorOnRemoveTunnel(systemError: error))
                 return
             }
             if let self = self, let index = self.tunnels.firstIndex(of: tunnel) {
@@ -296,7 +309,20 @@ class TunnelsManager {
     }
 
     func removeMultiple(tunnels: [TunnelContainer], completionHandler: @escaping (TunnelsManagerError?) -> Void) {
-        removeMultiple(tunnels: ArraySlice(tunnels), completionHandler: completionHandler)
+        // Temporarily pause observation of changes to VPN configurations to prevent the feedback
+        // loop that causes `reload()` to be called for each removed tunnel, which significantly
+        // impacts performance.
+        configurationsObservationToken = nil
+
+        removeMultiple(tunnels: ArraySlice(tunnels)) { [weak self] error in
+            completionHandler(error)
+
+            // Restart observation of changes to VPN configrations.
+            self?.startObservingTunnelConfigurations()
+
+            // Force reload all configurations to make sure that all tunnels are up to date.
+            self?.reload()
+        }
     }
 
     private func removeMultiple(tunnels: ArraySlice<TunnelContainer>, completionHandler: @escaping (TunnelsManagerError?) -> Void) {
@@ -406,7 +432,7 @@ class TunnelsManager {
     }
 
     private func startObservingTunnelStatuses() {
-        statusObservationToken = NotificationCenter.default.addObserver(forName: .NEVPNStatusDidChange, object: nil, queue: OperationQueue.main) { [weak self] statusChangeNotification in
+        statusObservationToken = NotificationCenter.default.observe(name: .NEVPNStatusDidChange, object: nil, queue: OperationQueue.main) { [weak self] statusChangeNotification in
             guard let self = self,
                 let session = statusChangeNotification.object as? NETunnelProviderSession,
                 let tunnelProvider = session.manager as? NETunnelProviderManager,
@@ -438,7 +464,7 @@ class TunnelsManager {
     }
 
     func startObservingTunnelConfigurations() {
-        configurationsObservationToken = NotificationCenter.default.addObserver(forName: .NEVPNConfigurationChange, object: nil, queue: OperationQueue.main) { [weak self] _ in
+        configurationsObservationToken = NotificationCenter.default.observe(name: .NEVPNConfigurationChange, object: nil, queue: OperationQueue.main) { [weak self] _ in
             DispatchQueue.main.async { [weak self] in
                 // We schedule reload() in a subsequent runloop to ensure that the completion handler of loadAllFromPreferences
                 // (reload() calls loadAllFromPreferences) is called after the completion handler of the saveToPreferences or

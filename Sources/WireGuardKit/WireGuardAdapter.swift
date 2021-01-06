@@ -21,9 +21,6 @@ public enum WireGuardAdapterError: Error {
     /// Failure to set network settings.
     case setNetworkSettings(Error)
 
-    /// Timeout when calling to set network settings.
-    case setNetworkSettingsTimeout
-
     /// Failure to start WireGuard backend.
     case startWireGuardBackend(Int32)
 }
@@ -152,10 +149,6 @@ public class WireGuardAdapter {
                 return
             }
 
-            #if os(macOS)
-            wgEnableRoaming(true)
-            #endif
-
             let networkMonitor = NWPathMonitor()
             networkMonitor.pathUpdateHandler = { [weak self] path in
                 self?.didReceivePathUpdate(path: path)
@@ -238,6 +231,9 @@ public class WireGuardAdapter {
                     self.logEndpointResolutionResults(resolutionResults)
 
                     wgSetConfig(handle, wgConfig)
+                    #if os(iOS)
+                    wgDisableSomeRoamingForBrokenMobileSemantics(handle)
+                    #endif
 
                     self.state = .started(handle, settingsGenerator)
 
@@ -305,7 +301,7 @@ public class WireGuardAdapter {
                 throw WireGuardAdapterError.setNetworkSettings(systemError)
             }
         } else {
-            throw WireGuardAdapterError.setNetworkSettingsTimeout
+            self.logHandler(.error, "setTunnelNetworkSettings timed out after 5 seconds; proceeding anyway")
         }
     }
 
@@ -346,11 +342,13 @@ public class WireGuardAdapter {
         }
 
         let handle = wgTurnOn(wgConfig, tunnelFileDescriptor)
-        if handle >= 0 {
-            return handle
-        } else {
+        if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
         }
+        #if os(iOS)
+        wgDisableSomeRoamingForBrokenMobileSemantics(handle)
+        #endif
+        return handle
     }
 
     /// Resolves the hostnames in the given tunnel configuration and return settings generator.
@@ -398,6 +396,7 @@ public class WireGuardAdapter {
                 self.logEndpointResolutionResults(resolutionResults)
 
                 wgSetConfig(handle, wgConfig)
+                wgDisableSomeRoamingForBrokenMobileSemantics(handle)
                 wgBumpSockets(handle)
             } else {
                 self.logHandler(.info, "Connectivity offline, pausing backend.")
