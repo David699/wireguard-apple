@@ -270,6 +270,11 @@ public class WireGuardAdapter {
             unretainedSelf.logHandler(tunnelLogLevel, swiftString)
         }
     }
+    
+    //stevexu add
+    public func onSettingNetworkSettings(networkSettings: NEPacketTunnelNetworkSettings) {
+        
+     }
 
     /// Set network tunnel configuration.
     /// This method ensures that the call to `setTunnelNetworkSettings` does not time out, as in
@@ -286,7 +291,8 @@ public class WireGuardAdapter {
         // Activate the condition
         condition.lock()
         defer { condition.unlock() }
-
+        //stevexu add
+        onSettingNetworkSettings(networkSettings: networkSettings)
         self.packetTunnelProvider?.setTunnelNetworkSettings(networkSettings) { error in
             systemError = error
             condition.signal()
