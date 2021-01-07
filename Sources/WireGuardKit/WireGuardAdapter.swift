@@ -272,7 +272,7 @@ open class WireGuardAdapter {
     }
     
     //stevexu add
-    public func onSettingNetworkSettings(networkSettings: NEPacketTunnelNetworkSettings) {
+    open func onSettingNetworkSettings(networkSettings: NEPacketTunnelNetworkSettings) {
         
      }
 
