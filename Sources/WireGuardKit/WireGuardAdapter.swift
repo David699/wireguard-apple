@@ -37,7 +37,7 @@ private enum State {
     case temporaryShutdown(_ settingsGenerator: PacketTunnelSettingsGenerator)
 }
 
-open public class WireGuardAdapter {
+open class WireGuardAdapter {
     public typealias LogHandler = (WireGuardLogLevel, String) -> Void
 
     /// Network routes monitor.
